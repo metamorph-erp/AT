@@ -186,7 +186,7 @@ Every guardrail config change is recorded:
 4. Enable WAL mode for concurrent reads during checkpoints
 5. Enable foreign keys (`PRAGMA foreign_keys = ON`)
 
-### 2.2 SQLite Schema (9 Tables — per Q4)
+### 2.2 SQLite Schema (10 Tables — per Q4)
 
 **Table 1: `holdings`** — Current portfolio positions
 ```
@@ -198,6 +198,7 @@ holdings:
   entry_date: TEXT NOT NULL          # ISO date
   highest_seen_price: REAL NOT NULL  # For trailing stop-loss G-006
   frozen: INTEGER DEFAULT 0          # 1 if stock suspended/delisted (W-007)
+  mode: TEXT NOT NULL                # sandbox, trial, production — mode when position was opened
   updated_at: TEXT NOT NULL          # ISO timestamp
   UNIQUE(symbol)                     # One row per held symbol
 ```
@@ -214,6 +215,7 @@ orders:
   status: TEXT NOT NULL              # SUBMITTED, FILLED, PARTIAL, REJECTED, CANCELLED
   source: TEXT NOT NULL              # ranking, stop_loss, drawdown, manual
   checkpoint: TEXT NOT NULL          # CP1, Mon-1..Mon-5, evening_batch
+  trade_date: TEXT NOT NULL          # ISO date — explicit trade date, avoids timezone-dependent date extraction
   submitted_at: TEXT NOT NULL
   filled_at: TEXT
   fill_price: REAL
@@ -221,6 +223,7 @@ orders:
   broker_order_id: TEXT              # OpenAlgo order ref (NULL in Sandbox mock)
   retry_count: INTEGER DEFAULT 0
   error_message: TEXT
+  mode: TEXT NOT NULL                # sandbox, trial, production — mode when order was placed
 ```
 
 **Table 3: `baseline_plans`** — Evening batch plans
@@ -317,6 +320,20 @@ system_state:
 - `last_backup_date`: ISO date
 - `current_mode`: "sandbox"/"trial"/"production"
 - `plan_stale_flag`: "true"/"false"
+- `mode_transition_date`: ISO date — date of last mode transition
+
+**Table 10: `watchlist`** — Active watchlist with change history
+```
+watchlist:
+  id: INTEGER PRIMARY KEY AUTOINCREMENT
+  symbol: TEXT NOT NULL
+  added_date: TEXT NOT NULL           # ISO date
+  removed_date: TEXT                  # ISO date, NULL if active
+  status: TEXT NOT NULL DEFAULT 'active'  # active, removed, frozen
+  source: TEXT NOT NULL               # seed, screener, manual
+  reason: TEXT                        # Reason for addition/removal
+  updated_at: TEXT NOT NULL
+```
 
 ### 2.3 CRUD Operations
 
@@ -333,7 +350,7 @@ Each table has standard operations. The StateManager exposes purpose-specific me
 **Orders**:
 - `insert_order(order_data) -> int` — Returns order ID
 - `update_order_status(order_id, status, fill_price, fill_quantity, filled_at)` — Lifecycle update
-- `get_pending_orders(date) -> list[Order]` — WHERE status = 'SUBMITTED' AND DATE(submitted_at, 'localtime') = date
+- `get_pending_orders(date) -> list[Order]` — WHERE status = 'SUBMITTED' AND trade_date = date
 - `get_orders_by_date(date) -> list[Order]`
 - `get_order_count_today() -> int` — For G-010 enforcement
 
@@ -368,6 +385,12 @@ Each table has standard operations. The StateManager exposes purpose-specific me
 **System State**:
 - `get_state(key) -> str | None`
 - `set_state(key, value)` — Upsert
+
+**Watchlist**:
+- `add_to_watchlist(symbol, source, reason)` — Insert with status='active', added_date=today
+- `remove_from_watchlist(symbol, reason)` — Set status='removed', removed_date=today
+- `get_active_watchlist() -> list[WatchlistEntry]` — WHERE status = 'active'
+- `get_watchlist_history() -> list[WatchlistEntry]` — All rows
 
 ### 2.4 Crash Recovery State Detection
 
@@ -404,6 +427,20 @@ Run on every system startup before entering normal operation:
 **Result**: `DiagnosticResult` with per-check pass/fail/warning status and overall status.
 
 **On failure**: System logs diagnostic results, sends Telegram alert (if possible), and refuses to start.
+
+### 2.6 Daily Drawdown Halt Reset
+
+**Purpose**: Implement G-004's "resume automatically next trading day" behavior (per SP-009 in business-rules.md).
+
+**At pre-market preparation (9:10 AM), before any checkpoint:**
+1. Read `drawdown_state.tier`
+2. If `tier = DAILY_HALT`:
+   a. Reset `drawdown_state.tier` to `NONE`
+   b. Reset `drawdown_state.daily_start_value` to current portfolio value
+   c. Log the reset at INFO level: `[at.execution] [INFO] DAILY_HALT reset: new daily_start_value = {value}`
+   d. Resume normal operation
+
+**Note**: This reset is automatic and requires no human intervention. The DAILY_HALT state is only meaningful within a single trading day.
 
 ---
 
@@ -542,6 +579,11 @@ data/qlib_dataset/
 │       ├── close.day.bin        # Sensex close (for relative strength + vol regime)
 │       └── ...
 ```
+
+**Sensex handling**: Sensex is loaded into the Qlib dataset as a **non-watchlist instrument** — it is not counted against the G-011 watchlist limit (50 stocks) and is never traded. It is used exclusively for:
+- Relative strength feature engineering (F-001)
+- Volatility regime computation (G-007/G-008) via 20-day annualized realized volatility
+- Circuit breaker detection (G-009) via intraday Sensex change
 
 **`load_into_qlib(raw_data: dict[str, list[OHLCVRecord]]) -> None`**:
 1. Convert raw OHLCVRecords to pandas DataFrames (per symbol)

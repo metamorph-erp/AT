@@ -17,21 +17,21 @@
 | Logging infrastructure | < 10 MB | File handlers with memory-mapped buffers |
 | **Unit 1 total** | **~1.5–2.0 GB** | Fits comfortably within 8 GB budget |
 
-### P-002: AlphaVantage Rate Limit Compliance
-- **Constraint**: Max 5 API calls/minute (free tier)
-- **Implementation**: Minimum 12-second spacing between consecutive calls
-- **Bootstrap impact**: 51 calls × 12s = ~10.2 minutes (one-time, acceptable)
-- **Checkpoint impact**: 10-15 calls × 12s = 2-3 minutes (within 10-min timeout)
+### P-002: Indian Stock Market API Rate Limit Compliance
+- **Constraint**: No enforced rate limit; self-imposed courtesy limit of 2 calls/second (0.5s spacing)
+- **Implementation**: Minimum 0.5-second spacing between consecutive calls; no API key required
+- **Bootstrap impact**: 50 calls × 0.5s = ~25 seconds (one-time, negligible)
+- **Checkpoint impact**: 50-stock fetch completes in < 30 seconds (well within 3-min budget)
 
 ### P-003: Checkpoint Time Budget — DataPipeline Share
 - **Total checkpoint timeout**: 10 minutes (E-012)
 - **DataPipeline allotment**: ≤ 3 minutes for intraday price fetch
 - **Rationale**: Remaining 7 minutes for inference (Unit 2) + risk checks (Unit 3) + order submission (Unit 3)
-- **Achieved by**: Limiting intraday fetches to held + proposed symbols only (~10-15 calls)
+- **Achieved by**: Indian Stock Market API has no per-call rate limit; 50-stock fetch completes in < 30 seconds
 
 ### P-004: Evening Batch — DataPipeline Share
 - **Bhavcopy download + parse**: < 30 seconds (2-3 MB CSV, local filter)
-- **Sensex fetch**: 1 AlphaVantage call, < 15 seconds
+- **Sensex fetch**: 1 Indian Stock Market API call, < 5 seconds
 - **Qlib append**: < 30 seconds (incremental, not full rewrite)
 - **Total DataPipeline time**: < 2 minutes of the evening batch window
 
@@ -41,7 +41,7 @@
 - **No write bottleneck**: SQLite handles thousands of writes/second; our load is trivial
 
 ### P-006: Bootstrap Completion Time
-- **Target**: < 15 minutes for 51 symbols from AlphaVantage
+- **Target**: < 5 minutes for 50 symbols from BSE Bhavcopy bulk download (bootstrap uses BSE Bhavcopy archives per Q-006, not the real-time API)
 - **Blocking**: System startup blocked until complete (SP-001)
 - **One-time only**: Not repeated after initial run
 
@@ -62,7 +62,7 @@
 - **Zero data loss guarantee**: SQLite WAL + fsync ensures no committed data is lost
 
 ### R-003: Data Source Resilience
-- **AlphaVantage**: 3 retries with exponential backoff (12s, 24s, 48s). On permanent failure, skip symbol, continue with others.
+- **Indian Stock Market API**: 3 retries with exponential backoff (5s, 10s, 20s). On permanent failure, skip symbol, continue with others.
 - **BSE Bhavcopy**: 3 retries at 15-minute intervals. On failure, evening batch proceeds without new EOD data; plan flagged stale.
 - **Telegram**: Queue locally, retry every 5 minutes until reachable (E-009).
 
@@ -84,12 +84,12 @@
 - **Storage**: `config/secrets.yaml` excluded from git (`.gitignore`)
 - **In-memory**: Cached after first read, never logged
 - **File permissions**: 0o600 (owner read/write only) on Linux VPS
-- **Scope**: AlphaVantage API key, Telegram bot token, Telegram chat ID
+- **Scope**: Telegram bot token, Telegram chat ID
 - **Phase 2 upgrade path**: Fernet symmetric encryption with machine-derived key
 
 ### S-002: Log Scrubbing (LR-001)
 - **Rule**: No credential values in log output — ever
-- **Implementation**: Log credential access by name only ("Accessed: alphavantage_api_key"), never value
+- **Implementation**: Log credential access by name only ("Accessed: telegram_bot_token"), never value
 - **Testing**: Integration test scans log output for sensitive patterns
 
 ### S-003: SQLite File Protection
@@ -104,7 +104,7 @@
 
 ### S-005: Input Validation at System Boundary
 - **BSE Bhavcopy CSV**: All fields validated before use (DV-001 through DV-004)
-- **AlphaVantage JSON**: Response structure validated, error responses handled (DS-002)
+- **Indian Stock Market API JSON**: Response structure validated, error responses handled (DS-002)
 - **Config YAML**: Schema validated at load time (CR-001 through CR-007)
 - **No SQL injection risk**: All SQLite access via parameterized queries through StateManager
 
@@ -119,8 +119,8 @@
 - **Independent tailing**: Admin can `tail -f logs/data.log` without unrelated noise
 
 ### O-002: Log Rotation & Retention
-- **Rotation**: Daily at midnight IST (`TimedRotatingFileHandler`)
-- **Retention**: 30 days (`backupCount=30`)
+- **Rotation**: Daily at midnight IST (system `logrotate` with `copytruncate`)
+- **Retention**: 30 days (`rotate 30` in logrotate config)
 - **Compression**: Post-2-day files compressed via system logrotate
 - **Disk alert**: Telegram notification if NVMe > 80% usage
 
@@ -129,7 +129,7 @@
 1. Database integrity (`PRAGMA integrity_check`)
 2. Schema version match
 3. Bootstrap status
-4. Model artifact existence (post-Unit 2)
+4. Model artifact existence (passes with WARNING on initial deployment before first Sunday retrain; fails only if system has operated > 7 days without a model)
 5. Config file parseable
 6. Credentials present
 7. Disk space < 80%
@@ -138,7 +138,7 @@
 ### O-004: Performance Logging
 - **Operations > 5 seconds**: Logged at INFO with duration
 - **Checkpoint lifecycle**: Start/end/duration/status for every checkpoint
-- **API call timing**: Each AlphaVantage/Bhavcopy call logged with duration
+- **API call timing**: Each Indian Stock Market API / Bhavcopy call logged with duration
 
 ---
 
@@ -171,7 +171,7 @@
 
 ### SC-001: Watchlist Growth
 - **Current max**: 50 stocks (G-011)
-- **Data pipeline scales linearly**: 50 stocks is well within AlphaVantage and Bhavcopy capacity
+- **Data pipeline scales linearly**: 50 stocks is well within Indian Stock Market API and Bhavcopy capacity
 - **No action needed**: System is designed for 50 stocks max, no horizontal scaling required
 
 ### SC-002: Historical Data Growth
@@ -198,7 +198,7 @@
 ### A-002: Recovery Time Objective (RTO)
 - **Crash recovery**: < 2 minutes (SQLite state reload + self-diagnostic)
 - **VPS reboot**: < 5 minutes (systemd auto-start)
-- **Bootstrap rerun**: ~15 minutes (only if data corruption)
+- **Bootstrap rerun**: ~5 minutes (only if data corruption)
 
 ### A-003: Recovery Point Objective (RPO)
 - **Zero data loss**: SQLite WAL mode ensures all committed transactions survive crashes
@@ -211,7 +211,7 @@
 ### T-001: Test Data Isolation
 - **Per-test SQLite databases**: Each test creates its own `test_*.db`, destroyed after test
 - **No cross-test state contamination**: Fresh fixtures for every test
-- **Mock API responses**: Deterministic fixtures for AlphaVantage and Bhavcopy (no real API calls)
+- **Mock API responses**: Deterministic fixtures for Indian Stock Market API and Bhavcopy (no real API calls)
 
 ### T-002: Fixture Management
 - **Setup**: Create test DB → seed known state (holdings, orders, config)
@@ -222,10 +222,10 @@
 
 ### T-003: Boundary Testing
 - **Guardrail thresholds**: Test at exact boundary values (e.g., drawdown at 9.99%, 10.0%, 10.01%)
-- **Rate limits**: Test at 5 calls/minute boundary
+- **Rate limits**: Test at self-imposed 2 calls/second boundary
 - **Validation rules**: Test edge cases (zero prices, negative volumes, extreme deviations at exactly 20%)
 
 ### T-004: Performance Testing
-- **Bootstrap timing**: Measure against 15-minute target with mock API (simulated 12s delays)
-- **Checkpoint timing**: Measure DataPipeline fetch time against 3-minute budget
+- **Bootstrap timing**: Measure against 5-minute target with mock API
+- **Checkpoint timing**: Measure DataPipeline fetch time against 3-minute budget (50-stock intraday fetch < 30 seconds)
 - **SQLite write throughput**: Verify < 1 second for typical daily write volume

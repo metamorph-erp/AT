@@ -21,7 +21,7 @@
 | **Config format** | YAML | JSON, TOML, INI | YAML supports comments, readable nested structures (guardrail tables), standard in Python ecosystem (Q1 answer) |
 | **YAML parser** | PyYAML (`pyyaml`) | ruamel.yaml, strictyaml | De facto standard, Qlib already depends on it (no new dependency), mature |
 | **Config validation** | Custom Python validation | pydantic, cerberus, jsonschema | Config is loaded once at startup; pydantic adds dependency for one-time validation. Simple `validate_config()` function with descriptive errors is sufficient |
-| **Credential storage** | Plaintext `secrets.yaml` + `.gitignore` (Phase 1) | env vars, keyring, Fernet | Phase 1 secrets (AV key, Telegram token) are low-risk. Encryption deferred to Phase 2 for Kotak Neo credentials (Q2 answer) |
+| **Credential storage** | Plaintext `secrets.yaml` + `.gitignore` (Phase 1) | env vars, keyring, Fernet | Phase 1 secrets (Telegram token, chat ID) are low-risk. Encryption deferred to Phase 2 for Kotak Neo credentials (Q2 answer) |
 
 ---
 
@@ -40,13 +40,21 @@
 
 | Decision | Choice | Alternatives Considered | Rationale |
 |---|---|---|---|
-| **HTTP client** | `requests` | httpx, urllib3, aiohttp | Synchronous is fine (no concurrent API calls needed — rate limit forces serial). Battle-tested, simple API |
+| **HTTP client** | `requests` | httpx, urllib3, aiohttp | Synchronous is fine (no concurrent API calls needed — self-imposed rate limit enforces serial). Battle-tested, simple API |
 | **CSV parsing** | `pandas` | csv (stdlib), polars | pandas is already a Qlib dependency; `pd.read_csv()` with dtype specification for Bhavcopy parsing |
 | **Qlib integration** | Microsoft Qlib (`qlib`) | Custom binary format | Qlib provides DataHandler, DataLoader, feature operators (CSRank, CSZScore). Standard binary format via `dump_bin` (Q9 answer) |
 | **Data validation** | Custom Python functions | great_expectations, pandera | 7 validation rules (DV-001 to DV-007) are simple comparisons. Framework overhead not justified |
 | **BSE calendar** | Custom YAML + Python `datetime` | exchange_calendars, pandas_market_calendars | BSE holidays are a short list (~15/year). Loading from YAML is trivial. External packages may not have up-to-date BSE calendars |
-| **Rate limiter** | Custom token bucket (in-memory) | ratelimit, tenacity | Single-threaded, single API source. A `time.sleep()` + timestamp tracker is sufficient for 5 calls/min |
-| **Retry logic** | Custom with exponential backoff | tenacity | 3 retry scenarios with different delays (AV: 12/24/48s, Bhavcopy: 15min, Telegram: 5min). Custom is clearer than configuring tenacity for 3 different policies |
+| **Rate limiter** | Custom token bucket (in-memory) | ratelimit, tenacity | Single-threaded, single API source. A `time.sleep()` + timestamp tracker is sufficient for self-imposed 2 calls/second courtesy limit |
+| **Retry logic** | Custom with exponential backoff | tenacity | 3 retry scenarios with different delays (Indian Stock Market API: 5/10/20s, Bhavcopy: 15min, Telegram: 5min). Custom is clearer than configuring tenacity for 3 different policies |
+
+---
+
+## 4a. Infrastructure
+
+| Decision | Choice | Alternatives Considered | Rationale |
+|---|---|---|---|
+| **systemd notification** | `sdnotify` | Direct socket write via `os.environ["NOTIFY_SOCKET"]` | Small package, clean API, avoids manual socket handling |
 
 ---
 
@@ -54,8 +62,8 @@
 
 | Decision | Choice | Alternatives Considered | Rationale |
 |---|---|---|---|
-| **Logging library** | `logging` (stdlib) | structlog, loguru | Zero dependencies, `TimedRotatingFileHandler` provides daily rotation + retention built-in. No log aggregation service exists to benefit from structlog JSON. (Q11 answer) |
-| **Log rotation** | `TimedRotatingFileHandler` + system `logrotate` | `RotatingFileHandler` | Daily rotation aligns with trading day cycle. `logrotate` handles compression (compress after 2 days) |
+| **Logging library** | `logging` (stdlib) | structlog, loguru | Zero dependencies, plain `FileHandler` for append-only writes; system `logrotate` handles rotation. No log aggregation service exists to benefit from structlog JSON. (Q11 answer) |
+| **Log rotation** | System `logrotate` (`copytruncate`) | `TimedRotatingFileHandler`, `RotatingFileHandler` | `logrotate` is the single owner of rotation/compression/retention (I-012). `copytruncate` rotates active files without requiring application restart. Python layer uses plain `FileHandler` to avoid dual-rotation conflicts |
 | **Log format** | Custom `Formatter` | JSON format | `[YYYY-MM-DD HH:MM:SS] [at.module] [LEVEL] message` — human-readable for `tail -f` debugging |
 
 ---
@@ -65,7 +73,7 @@
 | Decision | Choice | Alternatives Considered | Rationale |
 |---|---|---|---|
 | **Test framework** | `pytest` | unittest (stdlib) | pytest fixtures perfect for setup/teardown pattern (create DB → seed → test → destroy). Parameterization for boundary testing. De facto Python standard |
-| **API mocking** | `responses` (for `requests`) | httpretty, vcrpy, unittest.mock | Declarative mock definitions for AlphaVantage/Bhavcopy HTTP responses. Clean fixture management |
+| **API mocking** | `responses` (for `requests`) | httpretty, vcrpy, unittest.mock | Declarative mock definitions for Indian Stock Market API/Bhavcopy HTTP responses. Clean fixture management |
 | **Test database** | In-memory SQLite (`:memory:`) + temp files | Docker containers | `:memory:` for fast unit tests, temp files for integration tests that need file-level operations |
 | **Coverage** | `pytest-cov` | coverage.py directly | Integrated with pytest runner |
 
@@ -92,6 +100,7 @@ numpy>=1.23
 qlib>=0.9
 lightgbm>=3.3
 python-telegram-bot>=20.0
+sdnotify>=0.3.2       # systemd watchdog notifications (I-010)
 ```
 
 ### Development Dependencies (requirements-dev.txt)

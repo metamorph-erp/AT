@@ -217,7 +217,7 @@ ufw default allow outgoing
 ufw allow 22/tcp
 
 # No inbound ports needed — all outbound:
-# - AlphaVantage API: HTTPS 443 outbound
+# - Indian Stock Market API: HTTPS 443 outbound
 # - BSE Bhavcopy: HTTPS 443 outbound
 # - Telegram API: HTTPS 443 outbound
 # - Hetzner Storage Box: SSH 23 outbound (for rsync backup)
@@ -231,7 +231,7 @@ ufw enable
 
 | Service | URL Pattern | Protocol | Port | Rate Limit |
 |---|---|---|---|---|
-| AlphaVantage | `https://www.alphavantage.co/query` | HTTPS | 443 | 5/min (12s spacing) |
+| Indian Stock Market API | `https://raw.githubusercontent.com/...` | HTTPS | 443 | Self-imposed: 2/s (0.5s spacing) |
 | BSE Bhavcopy | `https://www.bseindia.com/download/BhscsrUpd/...` | HTTPS | 443 | 1 call/evening |
 | Telegram Bot | `https://api.telegram.org/bot{token}/...` | HTTPS | 443 | Burst OK |
 

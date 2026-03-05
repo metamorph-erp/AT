@@ -48,8 +48,11 @@ sudo systemctl status auto-trader
 ```bash
 cd /opt/auto-trader
 git log --oneline -5          # Find previous commit
-git checkout <prev-commit>
+git checkout <prev-commit>    # Rollback (enters detached HEAD)
 sudo systemctl restart auto-trader
+
+# After verifying rollback works, if making it permanent:
+# git checkout main && git reset --hard <prev-commit>
 ```
 
 No database migration rollback needed — schema changes are manual and rare (Phase 1).
@@ -84,6 +87,7 @@ sudo -u autotrader /opt/auto-trader/venv/bin/pip install -r /opt/auto-trader/req
 sudo -u autotrader mkdir -p /opt/auto-trader/data/qlib/bse_data
 sudo -u autotrader mkdir -p /opt/auto-trader/data/models
 sudo -u autotrader mkdir -p /opt/auto-trader/logs
+sudo -u autotrader mkdir -p /opt/auto-trader/data/backup
 chmod 700 /opt/auto-trader/data
 
 # 6. Set timezone
@@ -118,8 +122,8 @@ sudo apt install -y unattended-upgrades
 sudo dpkg-reconfigure -plow unattended-upgrades
 
 # 13. SSH hardening
-sudo sed -i 's/#PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config
-sudo sed -i 's/PermitRootLogin yes/PermitRootLogin no/' /etc/ssh/sshd_config
+sudo sed -i '/^#\?PasswordAuthentication/c\PasswordAuthentication no' /etc/ssh/sshd_config
+sudo sed -i '/^#\?PermitRootLogin/c\PermitRootLogin no' /etc/ssh/sshd_config
 sudo systemctl restart sshd
 
 echo "Setup complete. Create config/secrets.yaml manually, then: sudo systemctl start auto-trader"

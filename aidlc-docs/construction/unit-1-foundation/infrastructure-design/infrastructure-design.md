@@ -262,6 +262,7 @@ ufw enable
 | Path | Owner | Permissions | Rationale |
 |---|---|---|---|
 | `/opt/auto-trader/` | autotrader:autotrader | 0o755 | Application root |
+| `config/` | autotrader:autotrader | 0o750 | Config directory — contains secrets.yaml |
 | `config/secrets.yaml` | autotrader:autotrader | 0o600 | Credential file — owner only |
 | `data/autotrader.db` | autotrader:autotrader | 0o600 | Database — owner only |
 | `data/` | autotrader:autotrader | 0o700 | Data directory — owner only |

@@ -340,13 +340,12 @@ def create_logger(
     logger = logging.getLogger(f"at.{module_name}")
     logger.setLevel(getattr(logging, level.upper()))
 
-    handler = TimedRotatingFileHandler(
+    handler = logging.FileHandler(
         filename=log_dir / f"{module_name}.log",
-        when="midnight",
-        interval=1,
-        backupCount=30,
-        atTime=datetime.time(0, 0),  # Midnight IST
+        mode="a",  # Append mode — logrotate (copytruncate) owns rotation
     )
+    # Rotation is handled by logrotate (copytruncate) — see infrastructure-design.md §3.2
+    # Using plain FileHandler avoids double-rotation conflicts with TimedRotatingFileHandler
     formatter = logging.Formatter(
         "[%(asctime)s] [%(name)s] [%(levelname)s] %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",

@@ -253,6 +253,7 @@ Holding:
   entry_date: date
   highest_seen_price: float            # ₹ — for trailing stop-loss (G-006)
   frozen: bool                         # True if suspended/delisted (W-007)
+  mode: str                            # "sandbox", "trial", "production"
   updated_at: datetime
 ```
 
@@ -270,6 +271,7 @@ Order:
   status: OrderStatus
   source: str                          # "ranking", "stop_loss", "drawdown", "manual"
   checkpoint: str                      # "CP1", "Mon-1", ..., "evening_batch"
+  trade_date: date                     # Explicit trade date (ISO)
   submitted_at: datetime
   filled_at: datetime | None
   fill_price: float | None
@@ -277,6 +279,7 @@ Order:
   broker_order_id: str | None
   retry_count: int
   error_message: str | None
+  mode: str                            # "sandbox", "trial", "production"
 ```
 
 ### OrderStatus (enum)
@@ -408,6 +411,21 @@ TopNSnapshot:
   snapshot_date: date
   symbols: list[str]                   # JSON-serialized
   created_at: datetime
+```
+
+### WatchlistEntry
+Maps to `watchlist` table row.
+
+```
+WatchlistEntry:
+  id: int
+  symbol: str
+  added_date: date
+  removed_date: date | None
+  status: str                          # "active", "removed", "frozen"
+  source: str                          # "seed", "screener", "manual"
+  reason: str | None
+  updated_at: datetime
 ```
 
 ---

@@ -87,6 +87,16 @@
 - **Action**: Reject unknown keys with warning log
 - **Rationale**: Prevents key sprawl and typo-based bugs
 
+### SP-009: Daily Drawdown Halt Reset
+- **Rule**: At pre-market preparation (9:10 AM), if `drawdown_state.tier = DAILY_HALT`, automatically reset tier to `NONE`
+- **Action**: Reset tier, update daily_start_value to current portfolio value, log reset at INFO level
+- **Rationale**: G-004 specifies "resume automatically next trading day" — this rule implements that behavior
+
+### SP-010: Mode Context on Holdings and Orders
+- **Rule**: Every new holding and order record MUST include the current system mode (sandbox/trial/production)
+- **Action**: Read `system_state.current_mode` and populate `mode` column on insert
+- **Rationale**: Enables audit trail reconstruction and mode-transition analysis
+
 ---
 
 ## 3. Data Validation Rules
@@ -289,3 +299,19 @@
 - **Rule**: SQLite WAL file must be checkpointed periodically to prevent unbounded growth
 - **Implementation**: Run `PRAGMA wal_checkpoint(TRUNCATE)` after each evening batch completes
 - **Threshold**: If WAL file exceeds 50 MB, force checkpoint
+
+---
+
+## 9. Watchlist Persistence Rules
+
+### WP-001: Watchlist Change Logging (W-008)
+- **Rule**: Every watchlist addition, removal, or status change MUST be logged to `watchlist` table with timestamp, source, and reason
+- **Action**: Insert or update watchlist row before the change takes effect
+
+### WP-002: Active Watchlist Limit
+- **Rule**: Count of active watchlist entries (status = 'active') must not exceed G-011 (50 stocks)
+- **Action**: Reject addition if limit reached, log warning
+
+### WP-003: Frozen Stock Handling (W-007)
+- **Rule**: Stocks suspended/delisted >3 days are set to status='frozen' in watchlist table AND frozen=1 in holdings table
+- **Action**: Coordinated update across both tables

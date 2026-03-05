@@ -105,9 +105,9 @@ Prevents duplicate order submissions after crash recovery + restart.
 
 | Source | Delays | Max Retries | On Exhaust |
 |---|---|---|---|
-| AlphaVantage | 12s, 24s, 48s | 3 | Skip symbol, log warning, continue with remaining |
+| Indian Stock Market API | 5s, 10s, 20s | 3 | Skip symbol, log warning, continue with remaining |
 | BSE Bhavcopy | 15min, 15min, 15min | 3 | Evening batch proceeds without new EOD data; plan flagged stale |
-| Telegram | 5min, 5min, 5min, … | Unlimited (queued) | Messages queue locally, drain on reconnect |
+| Telegram | 5min, 5min, 5min, … | 100 retries (~8 hours practical cap) | Messages queue locally, drain on reconnect |
 
 **Implementation pattern**:
 ```python
@@ -178,7 +178,7 @@ class RateLimiter:
         self._last_call_time = time.monotonic()
 ```
 
-- AlphaVantage adapter holds one `RateLimiter(12.0)` instance
+- `IndianStockMarketAPIAdapter` holds one `RateLimiter(0.5)` instance
 - Called before every API request: `self._rate_limiter.wait()`
 - No external dependency, thread-safe not needed (single-threaded process)
 
@@ -194,17 +194,27 @@ class CheckpointBudget:
     def __init__(self, budget_seconds: int):
         self._budget = budget_seconds
 
+    def _timeout_handler(self, signum, frame):
+        raise TimeoutError(f"Budget of {self._budget}s exceeded")
+
     def run_with_budget(self, func, *args) -> tuple[Any, float]:
         start = time.monotonic()
+        old_handler = signal.signal(signal.SIGALRM, self._timeout_handler)
+        signal.alarm(self._budget)
         try:
             result = func(*args)
+            signal.alarm(0)  # Cancel alarm on success
             elapsed = time.monotonic() - start
             return result, elapsed
         except TimeoutError:
             elapsed = time.monotonic() - start
             log.error(f"Budget exceeded: {elapsed:.1f}s > {self._budget}s")
             raise
+        finally:
+            signal.signal(signal.SIGALRM, old_handler)
 ```
+
+> **Note**: This is the Linux (production) implementation using `signal.SIGALRM`. On Windows (dev), a `threading.Timer` fallback is used — it sets a flag that the function checks cooperatively, which is less precise but functional for development and testing.
 
 - DataPipeline.fetch_intraday() runs within a 180-second (3 min) budget
 - Caller (CheckpointOrchestrator in Unit 3) manages overall 10-minute budget
@@ -256,6 +266,7 @@ class ConfigManager:
 
 - No other module reads `secrets.yaml` directly — all go through `ConfigManager.get_credential()`
 - Startup validates all credentials exist (CR-003) before any module initializes
+- S-001 scope: Telegram bot token and Telegram chat ID (Indian Stock Market API requires no key)
 
 ### 4.2 Log Scrubbing Filter (S-002, LR-001)
 
@@ -280,6 +291,8 @@ class CredentialScrubber(logging.Filter):
             )
         return True  # Always emit the record (after scrubbing)
 ```
+
+> **Scaling note**: The compiled regex contains one pattern per credential value. Phase 1 has ~3 credentials (Telegram token, chat ID, and any future API keys). If Phase 2 adds broker TOTP secrets, session tokens, etc., the regex may grow to ~10 patterns. Performance impact is negligible up to ~50 patterns — benchmark if credential count exceeds this threshold.
 
 - Installed on all 4 loggers at startup
 - Initialized with credential values from `secrets.yaml`
@@ -388,6 +401,12 @@ def run_diagnostics(config_mgr, state_mgr) -> DiagnosticResult:
         check_disk_space,
         check_log_writable,
     ]:
+        # check_model_artifact: On first Sandbox deployment (before first Sunday retrain),
+        # no model artifact exists. This check passes with a WARNING: "No model artifact
+        # found — expected on initial deployment before first weekly retrain (M-003).
+        # Model will be created at next Sunday 2:00 AM retrain."
+        # The check only FAILS if bootstrap_complete is true AND the system has been
+        # running for > 7 days without a model artifact.
         start = time.monotonic()
         try:
             passed, msg = check_fn(config_mgr, state_mgr)
@@ -501,13 +520,13 @@ def seeded_state_mgr(state_mgr) -> StateManager:
 **Design**:
 ```python
 @pytest.fixture
-def mock_alphavantage():
-    """Mock AlphaVantage API with realistic response fixtures."""
+def mock_indian_stock_api():
+    """Mock Indian Stock Market API with realistic response fixtures."""
     with responses.RequestsMock() as rsps:
         rsps.add(
             responses.GET,
-            "https://www.alphavantage.co/query",
-            json=ALPHAVANTAGE_DAILY_FIXTURE,
+            re.compile(r"https://raw\.githubusercontent\.com/.*"),
+            json=INDIAN_STOCK_API_DAILY_FIXTURE,
             status=200,
         )
         yield rsps
@@ -525,7 +544,7 @@ def mock_bhavcopy():
         yield rsps
 ```
 
-**Fixture data files**: `tests/fixtures/alphavantage_daily.json`, `tests/fixtures/bhavcopy_sample.csv` — committed to repo.
+**Fixture data files**: `tests/fixtures/indian_stock_api_daily.json`, `tests/fixtures/bhavcopy_sample.csv` — committed to repo.
 
 ### 6.3 Boundary Test Helpers (T-003)
 
@@ -561,7 +580,6 @@ system:
 """
 
 TEST_SECRETS_YAML = """
-alphavantage_api_key: "test-key-not-real"
 telegram_bot_token: "test-token-not-real"
 telegram_chat_id: "test-chat-not-real"
 """

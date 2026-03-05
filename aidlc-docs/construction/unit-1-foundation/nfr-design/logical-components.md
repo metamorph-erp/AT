@@ -21,7 +21,7 @@
 
 ## 1. RateLimiter
 
-**Purpose**: Enforce AlphaVantage API rate limit (5 calls/min = 12-second spacing).
+**Purpose**: Enforce self-imposed rate limit for Indian Stock Market API (2 calls/second = 0.5-second spacing).
 
 **Interface**:
 ```python
@@ -31,7 +31,7 @@ class RateLimiter:
         """Block until min_interval has elapsed since last call."""
 ```
 
-**Consumers**: `AlphaVantageAdapter` (DataPipeline)
+**Consumers**: `IndianStockMarketAPIAdapter` (DataPipeline)
 
 **Properties**:
 - Stateful: tracks last call timestamp via `time.monotonic()`
@@ -56,13 +56,13 @@ def retry_with_backoff(
     """Execute func with retries. On exhaust, call on_exhaust or re-raise."""
 ```
 
-**Consumers**: All 3 data adapters (AlphaVantage, Bhavcopy, Telegram), each with their own delay config.
+**Consumers**: All 3 data adapters (Indian Stock Market API, Bhavcopy, Telegram), each with their own delay config.
 
 **Configuration presets**:
 ```python
-RETRY_ALPHAVANTAGE = {"delays": [12, 24, 48], "retryable_exceptions": (ConnectionError, Timeout, HTTPError)}
+RETRY_INDIAN_STOCK_API = {"delays": [5, 10, 20], "retryable_exceptions": (ConnectionError, Timeout, HTTPError)}
 RETRY_BHAVCOPY = {"delays": [900, 900, 900], "retryable_exceptions": (ConnectionError, Timeout, HTTPError)}
-RETRY_TELEGRAM = {"delays": [300] * 100, "retryable_exceptions": (ConnectionError, Timeout)}  # Unlimited retries
+RETRY_TELEGRAM = {"delays": [300] * 100, "retryable_exceptions": (ConnectionError, Timeout)}  # Practical cap: 100 retries (~8 hours); not truly infinite
 ```
 
 ---
@@ -104,7 +104,7 @@ class LoggerFactory:
 **Consumers**: Application startup code — creates 4 loggers (data, model, execution, scheduler).
 
 **Responsibilities**:
-- Sets `TimedRotatingFileHandler` with daily rotation, 30-day retention
+- Sets `logging.FileHandler` (append-only); rotation and retention managed by system `logrotate`
 - Applies consistent format: `[YYYY-MM-DD HH:MM:SS] [at.module] [LEVEL] message`
 - Installs `CredentialScrubber` filter on each logger
 - Reads log level from `config.yaml` per module
@@ -175,13 +175,13 @@ class CheckpointBudget:
 | `state_mgr` | StateManager with empty schema | Auto |
 | `seeded_state_mgr` | StateManager with sample holdings, orders, system state | Auto |
 | `config_mgr` | ConfigManager with test config + fake credentials | Auto |
-| `mock_alphavantage` | `responses` mock for AV API | Context manager |
+| `mock_indian_stock_api` | `responses` mock for Indian Stock Market API | Context manager |
 | `mock_bhavcopy` | `responses` mock for BSE download | Context manager |
 | `mock_telegram` | `responses` mock for Telegram API | Context manager |
 
 **Fixture data directory**: `tests/fixtures/`
-- `alphavantage_daily.json` — realistic daily OHLCV response
-- `alphavantage_intraday.json` — realistic 5-min bar response
+- `indian_stock_api_daily.json` — realistic daily OHLCV response
+- `indian_stock_api_intraday.json` — realistic 5-min bar response
 - `bhavcopy_sample.csv` — BSE Bhavcopy CSV with 20 sample stocks
 - `test_config.yaml` — valid config with sandbox mode
 - `test_secrets.yaml` — fake credential values
@@ -203,9 +203,9 @@ Application Startup
     ├── DiagnosticRunner(config_mgr, state_mgr)
     │   └── runs 8 checks, reports result
     └── DataPipeline(config_mgr, state_mgr, logger)
-        ├── AlphaVantageAdapter
-        │   ├── RateLimiter(12.0)
-        │   └── RetryHandler(delays=[12, 24, 48])
+        ├── IndianStockMarketAPIAdapter
+        │   ├── RateLimiter(0.5)
+        │   └── RetryHandler(delays=[5, 10, 20])
         ├── BhavcopyAdapter
         │   └── RetryHandler(delays=[900, 900, 900])
         └── QlibManager

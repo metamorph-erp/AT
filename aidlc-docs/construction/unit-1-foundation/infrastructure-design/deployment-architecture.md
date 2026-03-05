@@ -172,7 +172,7 @@ echo "Setup complete. Create config/secrets.yaml manually, then: sudo systemctl 
 | File permissions | No chmod equivalent (ignored) | 0o600/0o700 enforced |
 | watchdog | Not used (no systemd) | sd_notify watchdog |
 | cron | Not used (manual trigger) | System cron |
-| logrotate | Not used (Python rotation only) | System + Python |
+| logrotate | Not used (plain `FileHandler`, no rotation) | System `logrotate` (sole owner) |
 | Checkpoint timeout | `threading.Timer` (cooperative) | `signal.SIGALRM` (preemptive) |
 
 ---
@@ -249,8 +249,8 @@ echo "Setup complete. Create config/secrets.yaml manually, then: sudo systemctl 
                        │
           ┌────────────┼────────────────┐
           ▼            ▼                ▼
-   AlphaVantage   BSE Website     Telegram API
-   (market data)  (Bhavcopy CSV)  (alerts)
+ Indian Stock   BSE Website     Telegram API
+ Market API     (Bhavcopy CSV)  (alerts)
 
          Outbound SSH (port 23)
                        │
